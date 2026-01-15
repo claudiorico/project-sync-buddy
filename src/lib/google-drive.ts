@@ -5,7 +5,7 @@
  * Google only sees encrypted blobs, never plaintext financial data
  */
 
-const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email';
 const BACKUP_FILENAME = 'investpro-vault.encrypted';
 
 export interface GoogleDriveConfig {
@@ -13,6 +13,7 @@ export interface GoogleDriveConfig {
   accessToken: string | null;
   refreshToken: string | null;
   expiresAt: number | null;
+  userEmail: string | null;
 }
 
 // Store config in localStorage (tokens only, no financial data)
@@ -38,9 +39,34 @@ export function isGoogleDriveConnected(): boolean {
 }
 
 /**
+ * Fetch user's email from Google API
+ */
+async function fetchUserEmail(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      }
+    );
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    const data = await response.json();
+    return data.email || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Check for pending OAuth token from redirect flow
  */
-export function checkPendingOAuthToken(clientId: string): boolean {
+export async function checkPendingOAuthToken(clientId: string): Promise<boolean> {
   const pending = localStorage.getItem(PENDING_TOKEN_KEY);
   if (!pending) return false;
   
@@ -54,12 +80,16 @@ export function checkPendingOAuthToken(clientId: string): boolean {
       return false;
     }
     
+    // Get user email to identify the backup
+    const userEmail = await fetchUserEmail(access_token);
+    
     // Save the config
     const config: GoogleDriveConfig = {
       clientId,
       accessToken: access_token,
       refreshToken: null,
       expiresAt: Date.now() + (expires_in * 1000),
+      userEmail,
     };
     setGoogleDriveConfig(config);
     localStorage.removeItem(PENDING_TOKEN_KEY);
@@ -136,14 +166,29 @@ export async function initiateGoogleAuth(clientId: string): Promise<string> {
         try { popup.close(); } catch {}
         
         const { access_token, expires_in } = event.data;
-        const config: GoogleDriveConfig = {
-          clientId,
-          accessToken: access_token,
-          refreshToken: null,
-          expiresAt: Date.now() + (expires_in * 1000),
-        };
-        setGoogleDriveConfig(config);
-        resolve(access_token);
+        
+        // Get user email for identification
+        fetchUserEmail(access_token).then(userEmail => {
+          const config: GoogleDriveConfig = {
+            clientId,
+            accessToken: access_token,
+            refreshToken: null,
+            expiresAt: Date.now() + (expires_in * 1000),
+            userEmail,
+          };
+          setGoogleDriveConfig(config);
+          resolve(access_token);
+        }).catch(() => {
+          const config: GoogleDriveConfig = {
+            clientId,
+            accessToken: access_token,
+            refreshToken: null,
+            expiresAt: Date.now() + (expires_in * 1000),
+            userEmail: null,
+          };
+          setGoogleDriveConfig(config);
+          resolve(access_token);
+        });
       } else if (event.data?.type === 'google-auth-error') {
         window.removeEventListener('message', handleMessage);
         clearInterval(checkClosed);
@@ -190,6 +235,7 @@ export async function initiateGoogleAuth(clientId: string): Promise<string> {
 /**
  * Upload encrypted backup to Google Drive AppData folder
  * AppData is hidden from user's Drive UI - only this app can access
+ * Each user has their own backup file identified by their email
  */
 export async function uploadToGoogleDrive(encryptedData: string): Promise<void> {
   const config = getGoogleDriveConfig();
@@ -199,9 +245,10 @@ export async function uploadToGoogleDrive(encryptedData: string): Promise<void> 
   
   // First, check if file exists
   const existingFileId = await findBackupFile(config.accessToken);
+  const fileName = getBackupFileName();
   
   const metadata = {
-    name: BACKUP_FILENAME,
+    name: fileName,
     mimeType: 'application/json',
     parents: existingFileId ? undefined : ['appDataFolder'],
   };
@@ -266,10 +313,15 @@ export async function downloadFromGoogleDrive(): Promise<string | null> {
 
 /**
  * Find existing backup file in AppData folder
+ * Each user (identified by email) has their own backup file
  */
 async function findBackupFile(accessToken: string): Promise<string | null> {
+  const config = getGoogleDriveConfig();
+  const userEmail = config?.userEmail || 'default';
+  const fileName = `${BACKUP_FILENAME}-${btoa(userEmail).replace(/[^a-zA-Z0-9]/g, '')}`;
+  
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${BACKUP_FILENAME}'&fields=files(id,name,modifiedTime)`,
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${fileName}'&fields=files(id,name,modifiedTime)`,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -286,6 +338,15 @@ async function findBackupFile(accessToken: string): Promise<string | null> {
 }
 
 /**
+ * Get the backup filename for the current user
+ */
+function getBackupFileName(): string {
+  const config = getGoogleDriveConfig();
+  const userEmail = config?.userEmail || 'default';
+  return `${BACKUP_FILENAME}-${btoa(userEmail).replace(/[^a-zA-Z0-9]/g, '')}`;
+}
+
+/**
  * Get last sync time from Google Drive
  */
 export async function getLastSyncTime(): Promise<number | null> {
@@ -294,8 +355,10 @@ export async function getLastSyncTime(): Promise<number | null> {
     return null;
   }
   
+  const fileName = getBackupFileName();
+  
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${BACKUP_FILENAME}'&fields=files(id,modifiedTime)`,
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${fileName}'&fields=files(id,modifiedTime)`,
     {
       headers: {
         Authorization: `Bearer ${config.accessToken}`,
@@ -311,4 +374,12 @@ export async function getLastSyncTime(): Promise<number | null> {
   const file = data.files?.[0];
   
   return file ? new Date(file.modifiedTime).getTime() : null;
+}
+
+/**
+ * Get the connected user's email
+ */
+export function getConnectedUserEmail(): string | null {
+  const config = getGoogleDriveConfig();
+  return config?.userEmail || null;
 }
