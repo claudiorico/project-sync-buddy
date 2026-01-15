@@ -43,6 +43,7 @@ import {
   downloadFromGoogleDrive,
   uploadToGoogleDrive,
   clearGoogleDriveConfig,
+  getConnectedUserEmail,
 } from '@/lib/google-drive';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -63,6 +64,7 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
   
   const syncStatus = getSyncStatus();
   const isConnected = isGoogleDriveConnected();
+  const connectedEmail = getConnectedUserEmail();
   
   // Manual export
   const handleExport = async () => {
@@ -284,9 +286,14 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
                 className="space-y-4"
               >
                 <div className="flex items-center justify-between rounded-lg border border-success/20 bg-success-muted p-3">
-                  <div className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-success" />
-                    <span className="text-sm font-medium text-success">Conectado</span>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <Check className="h-4 w-4 text-success" />
+                      <span className="text-sm font-medium text-success">Conectado</span>
+                    </div>
+                    {connectedEmail && (
+                      <span className="text-xs text-muted-foreground ml-6">{connectedEmail}</span>
+                    )}
                   </div>
                   <Button
                     variant="ghost"

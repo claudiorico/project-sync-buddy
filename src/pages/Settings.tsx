@@ -93,25 +93,29 @@ export default function Settings() {
       const pendingClientId = getPendingClientId();
       
       if (pendingClientId) {
-        // Try to process the pending token
-        const success = checkPendingOAuthToken(pendingClientId);
-        
-        if (success) {
-          clearPendingClientId();
-          setIsConnected(true);
-          setShowClientIdInput(false);
+        // Try to process the pending token (async)
+        const processToken = async () => {
+          const success = await checkPendingOAuthToken(pendingClientId);
           
-          toast({
-            title: "Google Drive conectado",
-            description: "Sync automático ativado",
-          });
-        } else {
-          toast({
-            title: "Erro na conexão",
-            description: "Token expirado ou inválido. Tente novamente.",
-            variant: "destructive",
-          });
-        }
+          if (success) {
+            clearPendingClientId();
+            setIsConnected(true);
+            setShowClientIdInput(false);
+            
+            toast({
+              title: "Google Drive conectado",
+              description: "Sync automático ativado",
+            });
+          } else {
+            toast({
+              title: "Erro na conexão",
+              description: "Token expirado ou inválido. Tente novamente.",
+              variant: "destructive",
+            });
+          }
+        };
+        
+        processToken();
       }
       
       // Clean URL parameters
