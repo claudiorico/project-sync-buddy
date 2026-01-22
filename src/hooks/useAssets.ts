@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSecureStorage } from '@/contexts/SecureStorageContext';
+import { normalizeTickerForStorage } from '@/lib/ticker';
 import type { Asset } from '@/types/financial';
 
 export function useAssets(portfolioId?: string) {
@@ -47,6 +48,7 @@ export function useAssets(portfolioId?: string) {
       const now = Date.now();
       const newAsset: Asset = {
         ...data,
+        ticker: normalizeTickerForStorage(data.ticker, data.type),
         id: crypto.randomUUID(),
         createdAt: now,
         updatedAt: now,
@@ -66,9 +68,16 @@ export function useAssets(portfolioId?: string) {
       const existing = assets.find((a) => a.id === id);
       if (!existing) throw new Error('Ativo não encontrado');
 
+      const nextType = (data as Partial<Asset>).type ?? existing.type;
+      const nextTicker =
+        typeof (data as Partial<Asset>).ticker === 'string'
+          ? normalizeTickerForStorage(String((data as Partial<Asset>).ticker), nextType)
+          : existing.ticker;
+
       const updated: Asset = {
         ...existing,
         ...data,
+        ticker: nextTicker,
         updatedAt: Date.now(),
       };
 

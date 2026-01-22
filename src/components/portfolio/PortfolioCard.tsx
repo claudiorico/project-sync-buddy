@@ -47,6 +47,7 @@ const formatPercent = (value: number) => {
 interface PortfolioCardProps {
   portfolio: PortfolioWithAssets;
   index: number;
+  onOpenDetails: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onAddAsset: () => void;
@@ -57,6 +58,7 @@ interface PortfolioCardProps {
 export function PortfolioCard({
   portfolio,
   index,
+  onOpenDetails,
   onEdit,
   onDelete,
   onAddAsset,
@@ -88,7 +90,13 @@ export function PortfolioCard({
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: index * 0.1 }}
-        className="rounded-xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-hover"
+        role="button"
+        tabIndex={0}
+        onClick={onOpenDetails}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') onOpenDetails();
+        }}
+        className="rounded-xl border border-border bg-card shadow-card transition-shadow hover:shadow-card-hover cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         {/* Header with color indicator */}
         <div
@@ -128,29 +136,47 @@ export function PortfolioCard({
                 </div>
               )}
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={onAddAsset}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Adicionar Ativo
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onEdit}>
-                  <Pencil className="h-4 w-4 mr-2" />
-                  Editar Carteira
-                </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAddAsset();
+                    }}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Adicionar Ativo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEdit();
+                    }}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Editar Carteira
+                  </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setDeleteDialogOpen(true)}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Excluir Carteira
-                </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteDialogOpen(true);
+                    }}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Excluir Carteira
+                  </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -158,7 +184,7 @@ export function PortfolioCard({
           {/* Allocation Progress */}
           <div className="mb-4 space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Alocação</span>
+              <span className="text-muted-foreground">Peso no total</span>
               <div className="flex items-center gap-2">
                 <span className="tabular-nums font-medium text-foreground">
                   {portfolio.currentAllocation.toFixed(1)}%
@@ -169,32 +195,40 @@ export function PortfolioCard({
                 </span>
               </div>
             </div>
-            <Progress
-              value={
+
+            {(() => {
+              const achievement =
                 portfolio.targetAllocation > 0
-                  ? Math.min(
-                      (portfolio.currentAllocation / portfolio.targetAllocation) * 100,
-                      100
-                    )
-                  : 0
-              }
-              className="h-2"
-            />
-            <div className="text-xs">
-              {isOverAllocated && (
-                <span className="text-warning">
-                  +{allocationDiff.toFixed(1)}% acima do alvo
-                </span>
-              )}
-              {isUnderAllocated && (
-                <span className="text-loss">
-                  {allocationDiff.toFixed(1)}% abaixo do alvo
-                </span>
-              )}
-              {!isOverAllocated && !isUnderAllocated && (
-                <span className="text-success">No alvo</span>
-              )}
-            </div>
+                  ? (portfolio.currentAllocation / portfolio.targetAllocation) * 100
+                  : 0;
+              const achievementClamped = Math.min(Math.max(achievement, 0), 100);
+
+              return (
+                <>
+                  <Progress value={achievementClamped} className="h-2" />
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      Atingimento do alvo: {achievementClamped.toFixed(1)}%
+                    </span>
+                    <span>
+                      {isOverAllocated && (
+                        <span className="text-warning">
+                          +{allocationDiff.toFixed(1)}% acima do alvo
+                        </span>
+                      )}
+                      {isUnderAllocated && (
+                        <span className="text-loss">
+                          {allocationDiff.toFixed(1)}% abaixo do alvo
+                        </span>
+                      )}
+                      {!isOverAllocated && !isUnderAllocated && (
+                        <span className="text-success">No alvo</span>
+                      )}
+                    </span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           {/* Assets List */}
@@ -206,7 +240,10 @@ export function PortfolioCard({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setExpanded(!expanded)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(!expanded);
+                }}
                 className="h-6 px-2 text-xs"
               >
                 {expanded ? (
@@ -228,7 +265,14 @@ export function PortfolioCard({
                 <p className="text-sm text-muted-foreground mb-2">
                   Nenhum ativo cadastrado
                 </p>
-                <Button variant="outline" size="sm" onClick={onAddAsset}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddAsset();
+                  }}
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Adicionar Ativo
                 </Button>
@@ -244,21 +288,25 @@ export function PortfolioCard({
                         className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-sm group"
                       >
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-foreground">
-                              {asset.ticker}
-                            </span>
-                            <span className={cn(
-                              "text-xs tabular-nums px-1.5 py-0.5 rounded",
-                              isPositive 
-                                ? "bg-success/10 text-success" 
-                                : "bg-loss/10 text-loss"
-                            )}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-medium text-foreground truncate">
+                                {(asset.name || asset.ticker).toUpperCase()}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                <span className="font-mono">{asset.ticker}</span> • {formatCurrency(asset.currentPrice)} × {asset.shares}
+                              </div>
+                            </div>
+                            <span
+                              className={cn(
+                                "text-xs tabular-nums px-1.5 py-0.5 rounded shrink-0",
+                                isPositive
+                                  ? "bg-success/10 text-success"
+                                  : "bg-loss/10 text-loss"
+                              )}
+                            >
                               {formatPercent(asset.priceChangePercent)}
                             </span>
-                          </div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {formatCurrency(asset.currentPrice)} × {asset.shares}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -278,7 +326,10 @@ export function PortfolioCard({
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6"
-                              onClick={() => onEditAsset(asset)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditAsset(asset);
+                              }}
                             >
                               <Pencil className="h-3 w-3" />
                             </Button>
@@ -286,7 +337,10 @@ export function PortfolioCard({
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 text-destructive hover:text-destructive"
-                              onClick={() => handleDeleteAsset(asset.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteAsset(asset.id);
+                              }}
                             >
                               <Trash2 className="h-3 w-3" />
                             </Button>

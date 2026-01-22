@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeBackendFunction } from '@/lib/backend/functionsClient';
 
 export interface Quote {
   ticker: string;
@@ -23,12 +23,31 @@ interface UsePricesReturn {
   isLoading: boolean;
   error: string | null;
   lastUpdated: Date | null;
-  fetchQuotes: (tickers: string[]) => Promise<void>;
+  fetchQuotes: (tickers: string[], options?: { force?: boolean }) => Promise<void>;
   getQuote: (ticker: string) => Quote | undefined;
 }
 
-// Cache quotes for 5 minutes
+// Cache quotes:
+// - ativos comuns: 5 min
+// - fundos CVM (CNPJ): 24h (cota geralmente é D+1/D+2, então não precisa refetch constante)
 const CACHE_DURATION_MS = 5 * 60 * 1000;
+const FUND_CACHE_DURATION_MS = 24 * 60 * 60 * 1000;
+
+// Backend limita a 20 tickers por request; então dividimos em lotes.
+const BACKEND_TICKER_BATCH_SIZE = 20;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  if (size <= 0) return [items];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+function isFundCnpj(ticker: string) {
+  return /^\d{14}$/.test(String(ticker ?? '').replace(/\D/g, ''));
+}
 
 export function usePrices(): UsePricesReturn {
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
@@ -38,22 +57,30 @@ export function usePrices(): UsePricesReturn {
   
   const cacheRef = useRef<{
     quotes: Record<string, Quote>;
-    timestamp: number;
-  }>({ quotes: {}, timestamp: 0 });
+    timestamps: Record<string, number>;
+  }>({ quotes: {}, timestamps: {} });
 
-  const fetchQuotes = useCallback(async (tickers: string[]) => {
+  const fetchQuotes = useCallback(async (tickers: string[], options?: { force?: boolean }) => {
     if (!tickers || tickers.length === 0) {
       return;
     }
 
-    // Filter out tickers that are still cached
+    const force = options?.force === true;
+
+    // Filter out tickers that are still cached (unless forced)
     const now = Date.now();
     const cachedQuotes = cacheRef.current;
-    const tickersToFetch = tickers.filter(ticker => {
-      const cached = cachedQuotes.quotes[ticker.toUpperCase()];
-      if (!cached) return true;
-      return now - cachedQuotes.timestamp > CACHE_DURATION_MS;
-    });
+    const tickersToFetch = force
+      ? tickers
+      : tickers.filter(ticker => {
+          const upper = ticker.toUpperCase();
+          const cached = cachedQuotes.quotes[upper];
+          if (!cached) return true;
+
+          const ttl = isFundCnpj(upper) ? FUND_CACHE_DURATION_MS : CACHE_DURATION_MS;
+          const ts = cachedQuotes.timestamps[upper] ?? 0;
+          return now - ts > ttl;
+        });
 
     // If all tickers are cached, just update state from cache
     if (tickersToFetch.length === 0) {
@@ -72,34 +99,51 @@ export function usePrices(): UsePricesReturn {
       setIsLoading(true);
       setError(null);
 
-      console.log('Fetching quotes for:', tickersToFetch);
+      const batches = chunkArray(tickersToFetch, BACKEND_TICKER_BATCH_SIZE);
+      console.log('Fetching quotes for:', tickersToFetch, { batches: batches.length });
 
-      const { data, error: fnError } = await supabase.functions.invoke('get-quotes', {
-        body: { tickers: tickersToFetch },
-      });
-
-      if (fnError) {
-        console.error('Edge function error:', fnError);
-        throw new Error(fnError.message || 'Erro ao buscar cotações');
-      }
-
-      if (data?.error) {
-        throw new Error(data.error);
-      }
-
-      if (!data?.quotes) {
-        throw new Error('Resposta inválida da API');
-      }
-
-      // Update cache and state
+      // Update cache and state (normaliza a chave do ticker para bater com lookups em .toUpperCase())
+      // Além disso, para ativos negociados no Yahoo (ações/FIIs), também salvamos uma chave alternativa com sufixo ".SA"
+      // porque alguns usuários podem ter cadastrado o ticker como "HGBS11.SA", por exemplo.
       const newQuotes: Record<string, Quote> = {};
-      data.quotes.forEach((quote: Quote) => {
-        newQuotes[quote.ticker] = quote;
-      });
+
+      for (const batch of batches) {
+        const { data, error: fnError } = await invokeBackendFunction<{ quotes: Quote[]; error?: string }>(
+          'get-quotes',
+          { body: { tickers: batch } }
+        );
+
+        if (fnError) {
+          console.error('Edge function error:', fnError);
+          throw new Error(fnError.message || 'Erro ao buscar cotações');
+        }
+
+        if (data?.error) {
+          throw new Error(data.error);
+        }
+
+        if (!data?.quotes) {
+          throw new Error('Resposta inválida da API');
+        }
+
+        data.quotes.forEach((quote: Quote) => {
+          const key = String(quote.ticker ?? '').toUpperCase();
+          const normalized = { ...quote, ticker: key };
+          newQuotes[key] = normalized;
+
+          // Alias para tickers brasileiros no padrão Yahoo (ex.: PETR4.SA, HGBS11.SA)
+          if (/^[A-Z]{4}\d{1,2}$/.test(key)) {
+            newQuotes[`${key}.SA`] = normalized;
+          }
+        });
+      }
 
       cacheRef.current = {
         quotes: { ...cachedQuotes.quotes, ...newQuotes },
-        timestamp: now,
+        timestamps: {
+          ...cachedQuotes.timestamps,
+          ...Object.fromEntries(Object.keys(newQuotes).map((k) => [k, now])),
+        },
       };
 
       setQuotes(prev => ({ ...prev, ...newQuotes }));

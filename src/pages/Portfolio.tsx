@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { motion } from 'framer-motion';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePortfolios } from '@/hooks/usePortfolios';
 import { useAssets } from '@/hooks/useAssets';
@@ -20,6 +21,7 @@ const formatCurrency = (value: number) => {
 };
 
 export default function PortfolioPage() {
+  const navigate = useNavigate();
   const { isUnlocked } = useSecureStorage();
   const {
     portfoliosWithAssets,
@@ -28,7 +30,16 @@ export default function PortfolioPage() {
     updatePortfolio,
     removePortfolio,
     refresh: refreshPortfolios,
+    refreshQuotesNow,
+    quotesLastUpdated,
   } = usePortfolios();
+
+  const quotesLastUpdatedLabel = quotesLastUpdated
+    ? new Intl.DateTimeFormat('pt-BR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      }).format(quotesLastUpdated)
+    : null;
 
   const { createAsset, updateAsset, removeAsset } = useAssets();
 
@@ -41,6 +52,12 @@ export default function PortfolioPage() {
   const [assetPortfolioId, setAssetPortfolioId] = useState<string>('');
 
   const totalValue = portfoliosWithAssets.reduce((acc, p) => acc + p.currentValue, 0);
+  const totalTargetAllocation = portfoliosWithAssets.reduce(
+    (acc, p) => acc + (Number.isFinite(p.targetAllocation) ? p.targetAllocation : 0),
+    0
+  );
+  const missingAllocation = Math.max(0, 100 - totalTargetAllocation);
+  const overAllocation = Math.max(0, totalTargetAllocation - 100);
 
   // Portfolio handlers
   const handleCreatePortfolio = () => {
@@ -120,11 +137,23 @@ export default function PortfolioPage() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Portfólio</h1>
             <p className="text-muted-foreground">
-              {totalValue > 0 ? (
+              {portfoliosWithAssets.length > 0 ? (
                 <>
                   Patrimônio total:{' '}
                   <span className="font-semibold text-foreground">
                     {formatCurrency(totalValue)}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {' '}• Peso total:{' '}
+                    <span className="font-medium text-foreground tabular-nums">
+                      {totalTargetAllocation.toFixed(1)}%
+                    </span>
+                    {missingAllocation > 0 && (
+                      <span className="tabular-nums"> (faltam {missingAllocation.toFixed(1)}%)</span>
+                    )}
+                    {overAllocation > 0 && (
+                      <span className="tabular-nums"> (excedeu {overAllocation.toFixed(1)}%)</span>
+                    )}
                   </span>
                 </>
               ) : (
@@ -133,10 +162,31 @@ export default function PortfolioPage() {
             </p>
           </div>
           {portfoliosWithAssets.length > 0 && (
-            <Button className="gap-2" onClick={handleCreatePortfolio}>
-              <Plus className="h-4 w-4" />
-              Nova Carteira
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex flex-col items-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={refreshQuotesNow}
+                  disabled={isLoading}
+                  title="Atualiza as cotações agora"
+                >
+                  <RefreshCw className={isLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                  Atualizar agora
+                </Button>
+                {quotesLastUpdatedLabel && (
+                  <span className="mt-1 text-xs text-muted-foreground">
+                    Última atualização: {quotesLastUpdatedLabel}
+                  </span>
+                )}
+              </div>
+
+              <Button className="gap-2" onClick={handleCreatePortfolio}>
+                <Plus className="h-4 w-4" />
+                Nova Carteira
+              </Button>
+            </div>
           )}
         </motion.div>
 
@@ -160,6 +210,7 @@ export default function PortfolioPage() {
                 key={portfolio.id}
                 portfolio={portfolio}
                 index={index}
+                onOpenDetails={() => navigate(`/portfolio/${portfolio.id}`)}
                 onEdit={() => handleEditPortfolio(portfolio)}
                 onDelete={() => handleDeletePortfolio(portfolio.id)}
                 onAddAsset={() => handleAddAsset(portfolio.id)}

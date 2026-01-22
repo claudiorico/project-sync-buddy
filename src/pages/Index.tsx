@@ -9,6 +9,7 @@ import { Wallet, TrendingUp, PiggyBank, Loader2 } from "lucide-react";
 import { usePortfolios } from "@/hooks/usePortfolios";
 import { useSecureStorage } from "@/contexts/SecureStorageContext";
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("pt-BR", {
@@ -18,6 +19,7 @@ const formatCurrency = (value: number) => {
 };
 
 const Index = () => {
+  const navigate = useNavigate();
   const { isUnlocked } = useSecureStorage();
   const { portfoliosWithAssets, isLoading } = usePortfolios();
 
@@ -112,6 +114,7 @@ const Index = () => {
     ];
 
     return portfoliosWithAssets.map((portfolio, index) => ({
+      portfolioId: portfolio.id,
       name: portfolio.name,
       value: metrics.totalValue > 0 
         ? Number(((portfolio.currentValue / metrics.totalValue) * 100).toFixed(1))
@@ -193,12 +196,14 @@ const Index = () => {
 
         {hasData && (
           <>
-            {/* Charts Row */}
-            <div className="grid gap-6 lg:grid-cols-3">
-              <div className="lg:col-span-2">
-                <PatrimonyChart totalValue={metrics.totalValue} />
-              </div>
-              <AllocationChart data={allocationData} totalValue={metrics.totalValue} />
+            {/* Charts */}
+            <div className="grid gap-6">
+              <AllocationChart
+                data={allocationData}
+                totalValue={metrics.totalValue}
+                onSelectPortfolio={(portfolioId) => navigate(`/portfolio/${portfolioId}`)}
+              />
+              <PatrimonyChart totalValue={metrics.totalValue} />
             </div>
 
             {/* Bottom Row */}

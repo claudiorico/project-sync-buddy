@@ -3,12 +3,14 @@
  * Zero-Knowledge: password never leaves the client
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Shield, Eye, EyeOff, Lock, AlertTriangle } from 'lucide-react';
+import { Shield, Eye, EyeOff, Lock, AlertTriangle, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useSecureStorage } from '@/contexts/SecureStorageContext';
+import { toast } from '@/hooks/use-toast';
+import { isPersistentStorageEnabled, requestPersistentStorage } from '@/lib/indexeddb';
 
 interface VaultSetupProps {
   onComplete: () => void;
@@ -20,6 +22,13 @@ export function VaultSetup({ onComplete }: VaultSetupProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+
+  const [persisted, setPersisted] = useState<boolean | null>(null);
+  const [persistBusy, setPersistBusy] = useState(false);
+
+  useEffect(() => {
+    isPersistentStorageEnabled().then(setPersisted).catch(() => setPersisted(null));
+  }, []);
 
   const validatePassword = (pwd: string): string | null => {
     if (pwd.length < 8) return 'Mínimo de 8 caracteres';
@@ -140,6 +149,57 @@ export function VaultSetup({ onComplete }: VaultSetupProps) {
                     Não há recuperação de senha. Se você esquecer, seus dados serão perdidos permanentemente.
                   </p>
                 </div>
+              </div>
+            </div>
+
+            {/* Persistent Storage */}
+            <div className="rounded-lg border border-border bg-card/50 p-4 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">Persistência do cofre</p>
+                  <p className="text-xs text-muted-foreground">
+                    {persisted === true
+                      ? 'Ativa: o navegador tende a não limpar seus dados.'
+                      : persisted === false
+                        ? 'Inativa: seus dados podem ser removidos em limpezas automáticas.'
+                        : 'Indisponível neste navegador.'}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={persistBusy || persisted !== false}
+                  onClick={async () => {
+                    setPersistBusy(true);
+                    try {
+                      const granted = await requestPersistentStorage();
+                      const next = await isPersistentStorageEnabled();
+                      setPersisted(next);
+
+                      toast({
+                        title: granted ? 'Persistência ativada' : 'Persistência negada',
+                        description: granted
+                          ? 'O navegador tende a não limpar os dados do cofre.'
+                          : 'Seu navegador recusou a persistência. Ainda funciona, mas pode ser apagado em limpezas automáticas (principalmente em modo anônimo / pouca memória).',
+                        variant: granted ? undefined : 'destructive',
+                      });
+                    } catch (e) {
+                      console.error('[Vault] Persist request failed', e);
+                      toast({
+                        title: 'Não foi possível ativar',
+                        description: 'Este navegador não suportou ou bloqueou a persistência.',
+                        variant: 'destructive',
+                      });
+                      setPersisted(await isPersistentStorageEnabled().catch(() => null));
+                    } finally {
+                      setPersistBusy(false);
+                    }
+                  }}
+                >
+                  <HardDrive className="h-4 w-4" />
+                  {persisted === true ? 'Ativo' : persistBusy ? 'Ativando...' : 'Ativar'}
+                </Button>
               </div>
             </div>
 

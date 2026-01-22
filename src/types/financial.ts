@@ -18,7 +18,7 @@ export interface Asset {
   portfolioId: string;
   ticker: string;
   name: string;
-  type: 'stock' | 'reit' | 'etf' | 'fixed_income' | 'crypto' | 'international';
+  type: 'stock' | 'reit' | 'etf' | 'fixed_income' | 'crypto' | 'international' | 'investment_fund';
   targetAllocation: number; // percentage within portfolio
   shares: number;
   averagePrice: number;
@@ -35,6 +35,16 @@ export interface Transaction {
   pricePerShare: number;
   totalValue: number;
   fees: number;
+  date: number;
+  notes?: string;
+  createdAt: number;
+}
+
+export interface CashMovement {
+  id: string;
+  portfolioId: string;
+  type: 'deposit' | 'withdraw';
+  value: number;
   date: number;
   notes?: string;
   createdAt: number;
@@ -65,6 +75,15 @@ export interface UserSettings {
     rebalance: boolean;
     taxReminders: boolean;
     priceAlerts: boolean;
+  };
+  /**
+   * Regras opcionais para ajustar o preço médio (custo) ao registrar proventos.
+   * - FIIs: "yield" pode reduzir custo (custo líquido)
+   * - JCP: opcional (depende do seu método)
+   */
+  averagePriceAdjustments?: {
+    fiiYieldReducesCost: boolean;
+    jcpReducesCost: boolean;
   };
   createdAt: number;
   updatedAt: number;

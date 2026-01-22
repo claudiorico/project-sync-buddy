@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 interface AllocationData {
+  portfolioId?: string;
   name: string;
   value: number;
   color: string;
@@ -11,6 +12,7 @@ interface AllocationData {
 interface AllocationChartProps {
   data: AllocationData[];
   totalValue: number;
+  onSelectPortfolio?: (portfolioId: string) => void;
 }
 
 const formatCurrency = (value: number) => {
@@ -20,7 +22,7 @@ const formatCurrency = (value: number) => {
   }).format(value);
 };
 
-export function AllocationChart({ data, totalValue }: AllocationChartProps) {
+export function AllocationChart({ data, totalValue, onSelectPortfolio }: AllocationChartProps) {
   if (!data.length) {
     return (
       <motion.div
@@ -60,19 +62,24 @@ export function AllocationChart({ data, totalValue }: AllocationChartProps) {
         </p>
       </div>
 
-      <div className="flex items-center gap-6">
-        <div className="h-[200px] w-[200px]">
+      <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+        <div className="mx-auto h-[220px] w-full max-w-[220px] sm:mx-0 sm:h-[260px] sm:max-w-[260px]">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={data}
                 cx="50%"
                 cy="50%"
-                innerRadius={60}
-                outerRadius={90}
+                innerRadius="55%"
+                outerRadius="85%"
                 paddingAngle={3}
                 dataKey="value"
                 stroke="none"
+                style={{ cursor: onSelectPortfolio ? "pointer" : "default" }}
+                onClick={(slice) => {
+                  const pid = (slice as { payload?: AllocationData })?.payload?.portfolioId;
+                  if (pid && onSelectPortfolio) onSelectPortfolio(pid);
+                }}
               >
                 {data.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={entry.color} />
@@ -85,7 +92,11 @@ export function AllocationChart({ data, totalValue }: AllocationChartProps) {
                   borderRadius: "12px",
                   boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
                 }}
-                formatter={(value: number, name: string, props: { payload: AllocationData }) => [
+                formatter={(
+                  value: number,
+                  name: string,
+                  props: { payload: AllocationData }
+                ) => [
                   `${value}% - ${formatCurrency(props.payload.amount)}`,
                   props.payload.name,
                 ]}
@@ -94,7 +105,7 @@ export function AllocationChart({ data, totalValue }: AllocationChartProps) {
           </ResponsiveContainer>
         </div>
 
-        <div className="flex-1 space-y-3">
+        <div className="w-full flex-1 space-y-3">
           {data.map((item, index) => (
             <motion.div
               key={item.name}

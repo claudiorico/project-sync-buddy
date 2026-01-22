@@ -21,12 +21,15 @@ import {
   deleteItem,
   clearStore,
   wipeDatabase,
+  setUserNamespace,
 } from '@/lib/indexeddb';
+import { useFirebaseAuth } from '@/contexts/FirebaseAuthContext';
 import type {
   Portfolio,
   Asset,
   Transaction,
   Dividend,
+  CashMovement,
   UserSettings,
   EncryptionMetadata,
 } from '@/types/financial';
@@ -44,36 +47,46 @@ interface SecureStorageContextType extends SecureStorageState {
   unlockVault: (password: string) => Promise<boolean>;
   lockVault: () => void;
   isVaultSetup: () => Promise<boolean>;
-  
+
+  // Diagnostics
+  /** Stores that failed to decrypt (may indicate corruption or a different user namespace). */
+  decryptIssues: string[];
+  clearDecryptIssues: () => void;
+
   // Portfolio operations
   getPortfolios: () => Promise<Portfolio[]>;
   savePortfolio: (portfolio: Portfolio) => Promise<void>;
   deletePortfolio: (id: string) => Promise<void>;
-  
+
   // Asset operations
   getAssets: (portfolioId?: string) => Promise<Asset[]>;
   saveAsset: (asset: Asset) => Promise<void>;
   deleteAsset: (id: string) => Promise<void>;
-  
+
   // Transaction operations
   getTransactions: (assetId?: string) => Promise<Transaction[]>;
   saveTransaction: (transaction: Transaction) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
-  
+
   // Dividend operations
   getDividends: (assetId?: string) => Promise<Dividend[]>;
   saveDividend: (dividend: Dividend) => Promise<void>;
   deleteDividend: (id: string) => Promise<void>;
-  
+
+  // Cash movement operations
+  getCashMovements: (portfolioId?: string) => Promise<CashMovement[]>;
+  saveCashMovement: (movement: CashMovement) => Promise<void>;
+  deleteCashMovement: (id: string) => Promise<void>;
+
   // Settings
   getSettings: () => Promise<UserSettings | null>;
   saveSettings: (settings: UserSettings) => Promise<void>;
-  
+
   // Data management
   exportEncryptedBackup: () => Promise<string>;
   importEncryptedBackup: (backup: string) => Promise<void>;
   wipeAllData: () => Promise<void>;
-  
+
   // Trigger sync after data changes
   notifyDataChange: () => void;
 }
@@ -90,21 +103,59 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
     isLoading: true,
     error: null,
   });
-  
-  const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
 
-  // Check if vault is already set up on mount
+  const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
+  const [decryptIssuesByStore, setDecryptIssuesByStore] = useState<Record<string, number>>({});
+
+  const clearDecryptIssues = useCallback(() => setDecryptIssuesByStore({}), []);
+  
+  // Get user namespace from Firebase context
+  const { user, isLoading: isUserLoading } = useFirebaseAuth();
+  
+  // Generate namespace from Firebase user
+  const getUserNamespace = useCallback(() => {
+    return user?.uid || 'local';
+  }, [user]);
+
+  // Set IndexedDB namespace when user changes
   useEffect(() => {
+    if (!isUserLoading) {
+      const namespace = getUserNamespace();
+      console.log('[Vault] Setting user namespace:', namespace);
+      setUserNamespace(namespace);
+    }
+  }, [getUserNamespace, isUserLoading]);
+
+  // Check if vault is already set up on mount (after namespace is set)
+  useEffect(() => {
+    // Wait for auth to fully resolve AND have a user.
+    // Firebase can briefly emit "null" before restoring the session, which would
+    // incorrectly show the "create vault" screen for a moment.
+    if (isUserLoading || !user) return;
+
     const checkVault = async () => {
       try {
+        const namespace = getUserNamespace();
+        setUserNamespace(namespace);
+
+        console.log('[Vault] Checking vault setup for namespace:', namespace);
         await openDatabase();
         const metadata = await getItem('metadata', METADATA_KEY);
+        console.log('[Vault] Metadata found:', !!metadata);
+
+        // Also check if we have any data
+        if (metadata) {
+          const portfolios = await getItem('portfolios', 'master');
+          console.log('[Vault] Portfolios data exists:', !!portfolios);
+        }
+
         setState((prev) => ({
           ...prev,
           isInitialized: !!metadata,
           isLoading: false,
         }));
       } catch (error) {
+        console.error('[Vault] Error checking vault:', error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -112,8 +163,9 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
         }));
       }
     };
+
     checkVault();
-  }, []);
+  }, [getUserNamespace, isUserLoading, user]);
 
   const isVaultSetup = useCallback(async (): Promise<boolean> => {
     const metadata = await getItem('metadata', METADATA_KEY);
@@ -144,6 +196,7 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
         setItem('assets', MASTER_DATA_KEY, emptyData),
         setItem('transactions', MASTER_DATA_KEY, emptyData),
         setItem('dividends', MASTER_DATA_KEY, emptyData),
+        setItem('cash_movements', MASTER_DATA_KEY, emptyData),
       ]);
       
       setEncryptionKey(key);
@@ -218,49 +271,75 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
 
   // Generic encrypted CRUD operations
   const getEncryptedData = useCallback(
-    async <T,>(store: 'portfolios' | 'assets' | 'transactions' | 'dividends'): Promise<T[]> => {
+    async <T,>(
+      store: 'portfolios' | 'assets' | 'transactions' | 'dividends' | 'cash_movements'
+    ): Promise<T[]> => {
       if (!encryptionKey) throw new Error('Vault is locked');
-      
+
       const encrypted = await getItem(store, MASTER_DATA_KEY);
       if (!encrypted) return [];
-      
-      const decrypted = await decrypt(encrypted, encryptionKey);
-      return JSON.parse(decrypted);
+
+      try {
+        const decrypted = await decrypt(encrypted, encryptionKey);
+        return JSON.parse(decrypted);
+      } catch (err) {
+        // If a single store becomes corrupted (or was written with a previous key/version),
+        // we prefer to keep the app usable by returning an empty array for that store.
+        console.error(`[SecureStorage] Failed to decrypt store "${store}"`, err);
+        setDecryptIssuesByStore((prev) => (prev[store] ? prev : { ...prev, [store]: Date.now() }));
+        return [];
+      }
     },
     [encryptionKey]
   );
 
-  const saveEncryptedData = useCallback(async <T extends { id: string }>(
-    store: 'portfolios' | 'assets' | 'transactions' | 'dividends',
-    item: T
-  ): Promise<void> => {
-    if (!encryptionKey) throw new Error('Vault is locked');
-    
-    const items = await getEncryptedData<T>(store);
-    const index = items.findIndex((i) => i.id === item.id);
-    
-    if (index >= 0) {
-      items[index] = item;
-    } else {
-      items.push(item);
-    }
-    
-    const encrypted = await encrypt(JSON.stringify(items), encryptionKey);
-    await setItem(store, MASTER_DATA_KEY, encrypted);
-  }, [encryptionKey, getEncryptedData]);
+  // Notify for auto-sync (consumers can listen to this)
+  const [dataChangeCounter, setDataChangeCounter] = useState(0);
+  const notifyDataChange = useCallback(() => {
+    setDataChangeCounter((c) => c + 1);
+    // Dispatch custom event for auto-sync hook to listen
+    window.dispatchEvent(new CustomEvent('vault-data-changed'));
+  }, []);
 
-  const deleteEncryptedData = useCallback(async <T extends { id: string }>(
-    store: 'portfolios' | 'assets' | 'transactions' | 'dividends',
-    id: string
-  ): Promise<void> => {
-    if (!encryptionKey) throw new Error('Vault is locked');
-    
-    const items = await getEncryptedData<T>(store);
-    const filtered = items.filter((i) => i.id !== id);
-    
-    const encrypted = await encrypt(JSON.stringify(filtered), encryptionKey);
-    await setItem(store, MASTER_DATA_KEY, encrypted);
-  }, [encryptionKey, getEncryptedData]);
+  const saveEncryptedData = useCallback(
+    async <T extends { id: string }>(
+      store: 'portfolios' | 'assets' | 'transactions' | 'dividends' | 'cash_movements',
+      item: T
+    ): Promise<void> => {
+      if (!encryptionKey) throw new Error('Vault is locked');
+
+      const items = await getEncryptedData<T>(store);
+      const index = items.findIndex((i) => i.id === item.id);
+
+      if (index >= 0) {
+        items[index] = item;
+      } else {
+        items.push(item);
+      }
+
+      const encrypted = await encrypt(JSON.stringify(items), encryptionKey);
+      await setItem(store, MASTER_DATA_KEY, encrypted);
+      notifyDataChange();
+    },
+    [encryptionKey, getEncryptedData, notifyDataChange]
+  );
+
+  const deleteEncryptedData = useCallback(
+    async <T extends { id: string }>(
+      store: 'portfolios' | 'assets' | 'transactions' | 'dividends' | 'cash_movements',
+      id: string
+    ): Promise<void> => {
+      if (!encryptionKey) throw new Error('Vault is locked');
+
+      const items = await getEncryptedData<T>(store);
+      const filtered = items.filter((i) => i.id !== id);
+
+      const encrypted = await encrypt(JSON.stringify(filtered), encryptionKey);
+      await setItem(store, MASTER_DATA_KEY, encrypted);
+      notifyDataChange();
+    },
+    [encryptionKey, getEncryptedData, notifyDataChange]
+  );
 
   // Portfolio operations
   const getPortfolios = useCallback(() => getEncryptedData<Portfolio>('portfolios'), [getEncryptedData]);
@@ -291,51 +370,70 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
   const saveDividend = useCallback((d: Dividend) => saveEncryptedData('dividends', d), [saveEncryptedData]);
   const deleteDividend = useCallback((id: string) => deleteEncryptedData<Dividend>('dividends', id), [deleteEncryptedData]);
 
+  // Cash movement operations
+  const getCashMovements = useCallback(async (portfolioId?: string): Promise<CashMovement[]> => {
+    const movements = await getEncryptedData<CashMovement>('cash_movements');
+    return portfolioId ? movements.filter((m) => m.portfolioId === portfolioId) : movements;
+  }, [getEncryptedData]);
+  const saveCashMovement = useCallback((m: CashMovement) => saveEncryptedData('cash_movements', m), [saveEncryptedData]);
+  const deleteCashMovement = useCallback((id: string) => deleteEncryptedData<CashMovement>('cash_movements', id), [deleteEncryptedData]);
+
   // Settings (stored separately, also encrypted)
   const getSettings = useCallback(async (): Promise<UserSettings | null> => {
     if (!encryptionKey) return null;
-    
+
     const encrypted = await getItem('settings', MASTER_DATA_KEY);
     if (!encrypted) return null;
-    
+
     const decrypted = await decrypt(encrypted, encryptionKey);
     return JSON.parse(decrypted);
   }, [encryptionKey]);
 
-  const saveSettings = useCallback(async (settings: UserSettings): Promise<void> => {
-    if (!encryptionKey) throw new Error('Vault is locked');
-    
-    const encrypted = await encrypt(JSON.stringify(settings), encryptionKey);
-    await setItem('settings', MASTER_DATA_KEY, encrypted);
-  }, [encryptionKey]);
+  const saveSettings = useCallback(
+    async (settings: UserSettings): Promise<void> => {
+      if (!encryptionKey) throw new Error('Vault is locked');
+
+      const encrypted = await encrypt(JSON.stringify(settings), encryptionKey);
+      await setItem('settings', MASTER_DATA_KEY, encrypted);
+      notifyDataChange();
+    },
+    [encryptionKey, notifyDataChange]
+  );
 
   // Backup/restore
   const exportEncryptedBackup = useCallback(async (): Promise<string> => {
     if (!encryptionKey) throw new Error('Vault is locked');
     
-    const data = {
-      portfolios: await getItem('portfolios', MASTER_DATA_KEY),
-      assets: await getItem('assets', MASTER_DATA_KEY),
-      transactions: await getItem('transactions', MASTER_DATA_KEY),
-      dividends: await getItem('dividends', MASTER_DATA_KEY),
-      settings: await getItem('settings', MASTER_DATA_KEY),
-      metadata: await getItem('metadata', METADATA_KEY),
-      exportedAt: Date.now(),
-    };
+      const data = {
+        portfolios: await getItem('portfolios', MASTER_DATA_KEY),
+        assets: await getItem('assets', MASTER_DATA_KEY),
+        transactions: await getItem('transactions', MASTER_DATA_KEY),
+        dividends: await getItem('dividends', MASTER_DATA_KEY),
+        cash_movements: await getItem('cash_movements', MASTER_DATA_KEY),
+        settings: await getItem('settings', MASTER_DATA_KEY),
+        metadata: await getItem('metadata', METADATA_KEY),
+        exportedAt: Date.now(),
+      };
     
     return JSON.stringify(data);
   }, [encryptionKey]);
 
-  const importEncryptedBackup = useCallback(async (backup: string): Promise<void> => {
-    const data = JSON.parse(backup);
-    
-    if (data.portfolios) await setItem('portfolios', MASTER_DATA_KEY, data.portfolios);
-    if (data.assets) await setItem('assets', MASTER_DATA_KEY, data.assets);
-    if (data.transactions) await setItem('transactions', MASTER_DATA_KEY, data.transactions);
-    if (data.dividends) await setItem('dividends', MASTER_DATA_KEY, data.dividends);
-    if (data.settings) await setItem('settings', MASTER_DATA_KEY, data.settings);
-    if (data.metadata) await setItem('metadata', METADATA_KEY, data.metadata);
-  }, []);
+  const importEncryptedBackup = useCallback(
+    async (backup: string): Promise<void> => {
+      const data = JSON.parse(backup);
+
+      if (data.portfolios) await setItem('portfolios', MASTER_DATA_KEY, data.portfolios);
+      if (data.assets) await setItem('assets', MASTER_DATA_KEY, data.assets);
+      if (data.transactions) await setItem('transactions', MASTER_DATA_KEY, data.transactions);
+      if (data.dividends) await setItem('dividends', MASTER_DATA_KEY, data.dividends);
+      if (data.cash_movements) await setItem('cash_movements', MASTER_DATA_KEY, data.cash_movements);
+      if (data.settings) await setItem('settings', MASTER_DATA_KEY, data.settings);
+      if (data.metadata) await setItem('metadata', METADATA_KEY, data.metadata);
+
+      notifyDataChange();
+    },
+    [notifyDataChange]
+  );
 
   const wipeAllData = useCallback(async (): Promise<void> => {
     await wipeDatabase();
@@ -348,18 +446,14 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
     });
   }, []);
 
-  // Notify for auto-sync (consumers can listen to this)
-  const [dataChangeCounter, setDataChangeCounter] = useState(0);
-  const notifyDataChange = useCallback(() => {
-    setDataChangeCounter((c) => c + 1);
-  }, []);
-
   const value: SecureStorageContextType = {
     ...state,
     isVaultSetup,
     initializeVault,
     unlockVault,
     lockVault,
+    decryptIssues: Object.keys(decryptIssuesByStore),
+    clearDecryptIssues,
     getPortfolios,
     savePortfolio,
     deletePortfolio,
@@ -372,6 +466,9 @@ export function SecureStorageProvider({ children }: { children: React.ReactNode 
     getDividends,
     saveDividend,
     deleteDividend,
+    getCashMovements,
+    saveCashMovement,
+    deleteCashMovement,
     getSettings,
     saveSettings,
     exportEncryptedBackup,

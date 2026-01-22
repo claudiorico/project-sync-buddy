@@ -1,6 +1,4 @@
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface AssetData {
   ticker: string;
@@ -65,8 +63,6 @@ export function TopAssets({ assets, totalValue }: TopAssetsProps) {
 
       <div className="space-y-4">
         {assets.map((asset, index) => {
-          const isPositive = asset.change >= 0;
-
           return (
             <motion.div
               key={asset.ticker}
@@ -75,37 +71,28 @@ export function TopAssets({ assets, totalValue }: TopAssetsProps) {
               transition={{ duration: 0.3, delay: 0.7 + index * 0.1 }}
               className="flex items-center justify-between rounded-lg border border-border/50 p-4 transition-colors hover:bg-muted/30"
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 min-w-0">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 font-mono text-sm font-bold text-primary">
                   {asset.ticker.slice(0, 2)}
                 </div>
-                <div>
-                  <p className="font-semibold text-foreground">{asset.ticker}</p>
-                  <p className="text-xs text-muted-foreground">{asset.name}</p>
+                <div className="min-w-0 max-w-[140px] sm:max-w-[200px]">
+                  <p className="font-semibold text-foreground truncate">
+                    {asset.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground font-mono truncate">
+                    {asset.ticker}
+                  </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-6">
                 <div className="text-right">
                   <p className="font-semibold text-foreground tabular-nums">
-                    {formatCurrency(asset.price)}
+                    {asset.allocation.toFixed(1)}%
                   </p>
-                  <div
-                    className={cn(
-                      "flex items-center justify-end gap-1 text-xs font-medium",
-                      isPositive ? "text-success" : "text-loss"
-                    )}
-                  >
-                    {isPositive ? (
-                      <TrendingUp className="h-3 w-3" />
-                    ) : (
-                      <TrendingDown className="h-3 w-3" />
-                    )}
-                    <span className="tabular-nums">
-                      {isPositive ? "+" : ""}
-                      {asset.change.toFixed(2)}%
-                    </span>
-                  </div>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {formatCurrency(asset.value)}
+                  </p>
                 </div>
 
                 <div className="w-20">

@@ -1,4 +1,4 @@
-import { Bell, Search, Sun, Moon, User, Lock, Cloud, CloudOff, HardDrive } from "lucide-react";
+import { Bell, Search, Sun, Moon, User, Lock, Cloud, HardDrive, LogOut } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { PrivacyBadge } from "./PrivacyBadge";
 import { useSecureStorage } from "@/contexts/SecureStorageContext";
+import { useFirebaseAuth } from "@/contexts/FirebaseAuthContext";
 import { BackupRestoreDialog } from "@/components/backup/BackupRestoreDialog";
 import { isGoogleDriveConnected } from "@/lib/google-drive";
 import { getSyncStatus } from "@/lib/backup";
@@ -22,6 +23,22 @@ export function Header() {
   const [isDark, setIsDark] = useState(false);
   const [syncConnected, setSyncConnected] = useState(false);
   const { lockVault } = useSecureStorage();
+  const { user, isAuthenticated, logout } = useFirebaseAuth();
+
+  // Get user initials for avatar fallback
+  const getUserInitials = (): string => {
+    if (user?.displayName) {
+      const parts = user.displayName.split(' ');
+      if (parts.length >= 2) {
+        return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+      }
+      return user.displayName.substring(0, 2).toUpperCase();
+    }
+    if (user?.email) {
+      return user.email.substring(0, 2).toUpperCase();
+    }
+    return 'US';
+  };
 
   useEffect(() => {
     setSyncConnected(isGoogleDriveConnected());
@@ -122,20 +139,45 @@ export function Header() {
               variant="ghost"
               className="ml-2 flex h-10 items-center gap-3 rounded-lg px-2 hover:bg-muted"
             >
-              <Avatar className="h-8 w-8">
-                <AvatarImage src="/placeholder.svg" alt="User" />
+              <Avatar className="h-8 w-8 ring-2 ring-primary/20">
+                <AvatarImage 
+                  src={user?.photoURL || undefined} 
+                  alt={user?.displayName || "Usuário"} 
+                  referrerPolicy="no-referrer"
+                />
                 <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
-                  JP
+                  {getUserInitials()}
                 </AvatarFallback>
               </Avatar>
               <div className="hidden flex-col items-start md:flex">
-                <span className="text-sm font-medium">Usuário Local</span>
-                <span className="text-xs text-muted-foreground">Zero-Knowledge</span>
+                <span className="text-sm font-medium">
+                  {user?.displayName || 'Usuário'}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {isAuthenticated ? user?.email : 'Zero-Knowledge'}
+                </span>
               </div>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>Minha Conta</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel className="flex items-center gap-3 py-3">
+              <Avatar className="h-10 w-10">
+                <AvatarImage 
+                  src={user?.photoURL || undefined} 
+                  alt={user?.displayName || "Usuário"} 
+                  referrerPolicy="no-referrer"
+                />
+                <AvatarFallback className="bg-primary/10 text-sm font-medium text-primary">
+                  {getUserInitials()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col">
+                <span className="font-medium">{user?.displayName || 'Usuário'}</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {user?.email || 'Dados criptografados localmente'}
+                </span>
+              </div>
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem>
               <User className="mr-2 h-4 w-4" />
@@ -147,6 +189,12 @@ export function Header() {
               <Lock className="mr-2 h-4 w-4" />
               Bloquear Cofre
             </DropdownMenuItem>
+            {isAuthenticated && (
+              <DropdownMenuItem onClick={logout} className="text-destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                Sair
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

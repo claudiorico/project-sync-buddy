@@ -17,6 +17,7 @@ export interface BackupData {
     assets: string | null;
     transactions: string | null;
     dividends: string | null;
+    cash_movements: string | null;
     settings: string | null;
     metadata: string | null;
   };
@@ -27,6 +28,12 @@ export interface SyncStatus {
   provider: 'google_drive' | 'local' | null;
   autoSyncEnabled: boolean;
   fileName: string | null;
+
+  /**
+   * True when we already warned (once) that a cloud backup exists and auto-sync won't overwrite it.
+   * This prevents repeated toasts on every change before the first manual confirmation/upload.
+   */
+  existingBackupWarningShown: boolean;
 }
 
 // Generate a unique device ID for this browser instance
@@ -54,6 +61,7 @@ export function createBackupPayload(encryptedData: string): BackupData {
       assets: parsed.assets || null,
       transactions: parsed.transactions || null,
       dividends: parsed.dividends || null,
+      cash_movements: parsed.cash_movements || null,
       settings: parsed.settings || null,
       metadata: parsed.metadata || null,
     },
@@ -119,16 +127,31 @@ export function readBackupFile(file: File): Promise<BackupData> {
 const SYNC_STATUS_KEY = 'investpro_sync_status';
 
 export function getSyncStatus(): SyncStatus {
-  const stored = localStorage.getItem(SYNC_STATUS_KEY);
-  if (stored) {
-    return JSON.parse(stored);
-  }
-  return {
+  const defaults: SyncStatus = {
     lastSyncAt: null,
     provider: null,
     autoSyncEnabled: false,
     fileName: null,
+    existingBackupWarningShown: false,
   };
+
+  const stored = localStorage.getItem(SYNC_STATUS_KEY);
+  if (!stored) return defaults;
+
+  try {
+    const parsed = JSON.parse(stored) as Partial<SyncStatus>;
+
+    return {
+      lastSyncAt: typeof parsed.lastSyncAt === "number" ? parsed.lastSyncAt : null,
+      provider:
+        parsed.provider === "google_drive" || parsed.provider === "local" ? parsed.provider : null,
+      autoSyncEnabled: Boolean(parsed.autoSyncEnabled),
+      fileName: typeof parsed.fileName === "string" ? parsed.fileName : null,
+      existingBackupWarningShown: Boolean(parsed.existingBackupWarningShown),
+    };
+  } catch {
+    return defaults;
+  }
 }
 
 export function updateSyncStatus(partial: Partial<SyncStatus>): void {

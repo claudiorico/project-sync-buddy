@@ -3,10 +3,10 @@
  * Integrates real-time prices from Brapi
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSecureStorage } from '@/contexts/SecureStorageContext';
 import { usePrices, type Quote } from '@/hooks/usePrices';
-import type { Portfolio, Asset } from '@/types/financial';
+import type { Portfolio, Asset, Transaction } from '@/types/financial';
 
 export interface AssetWithPrice extends Asset {
   currentPrice: number;
@@ -32,16 +32,60 @@ export function usePortfolios() {
     savePortfolio,
     deletePortfolio,
     getAssets,
+    getTransactions,
     notifyDataChange,
   } = useSecureStorage();
 
-  const { quotes, fetchQuotes, isLoading: isPricesLoading } = usePrices();
+  const { quotes, fetchQuotes, isLoading: isPricesLoading, lastUpdated: quotesLastUpdated } = usePrices();
 
   const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
   const [portfoliosWithAssets, setPortfoliosWithAssets] = useState<PortfolioWithAssets[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [allAssets, setAllAssets] = useState<Asset[]>([]);
+  const [allTransactions, setAllTransactions] = useState<Transaction[]>([]);
+
+  const derivedHoldingsByAssetId = useMemo(() => {
+    // Calcula quantidade e preço médio a partir das transações.
+    // Útil quando o ativo foi criado via importação e ficou com shares/averagePrice = 0.
+    const map = new Map<string, { shares: number; averagePrice: number }>();
+    const byAsset = new Map<string, Transaction[]>();
+
+    for (const t of allTransactions) {
+      const list = byAsset.get(t.assetId) ?? [];
+      list.push(t);
+      byAsset.set(t.assetId, list);
+    }
+
+    for (const [assetId, txs] of byAsset.entries()) {
+      const ordered = [...txs].sort((a, b) => a.date - b.date);
+      let shares = 0;
+      let cost = 0;
+
+      for (const tx of ordered) {
+        const qty = Number(tx.shares ?? 0);
+        const total = Number(tx.totalValue ?? 0);
+        if (!Number.isFinite(qty) || qty === 0) continue;
+
+        if (tx.type === 'buy') {
+          shares += qty;
+          cost += total;
+        } else {
+          // Reduz custo pelo preço médio atual (método custo médio)
+          const avg = shares > 0 ? cost / shares : 0;
+          const sellQty = Math.min(shares, qty);
+          shares -= sellQty;
+          cost -= avg * sellQty;
+        }
+      }
+
+      if (shares > 0 && cost > 0) {
+        map.set(assetId, { shares, averagePrice: cost / shares });
+      }
+    }
+
+    return map;
+  }, [allTransactions]);
 
   // Load portfolios and assets
   const loadPortfolios = useCallback(async () => {
@@ -57,21 +101,24 @@ export function usePortfolios() {
       setIsLoading(true);
       setError(null);
 
-      const [loadedPortfolios, loadedAssets] = await Promise.all([
+      const [loadedPortfolios, loadedAssets, loadedTransactions] = await Promise.all([
         getPortfolios(),
         getAssets(),
+        getTransactions(),
       ]);
 
       setPortfolios(loadedPortfolios);
       setAllAssets(loadedAssets);
+      setAllTransactions(loadedTransactions);
 
-      // Fetch quotes for all tickers
+      // Fetch quotes for all tickers (inclui cripto e fundos CVM)
       const tickers = loadedAssets
-        .filter(a => ['stock', 'reit', 'etf'].includes(a.type))
-        .map(a => a.ticker);
+        .filter((a) => ['stock', 'reit', 'etf', 'crypto', 'investment_fund', 'fixed_income'].includes(a.type))
+        .map((a) => a.ticker);
       
       if (tickers.length > 0) {
-        await fetchQuotes(tickers);
+        // Ao abrir/desbloquear o cofre, força refresh para não depender do cache/intervalo.
+        await fetchQuotes(tickers, { force: true });
       }
     } catch (err) {
       setError('Erro ao carregar portfólios');
@@ -79,7 +126,7 @@ export function usePortfolios() {
     } finally {
       setIsLoading(false);
     }
-  }, [isUnlocked, getPortfolios, getAssets, fetchQuotes]);
+  }, [isUnlocked, getPortfolios, getAssets, getTransactions, fetchQuotes]);
 
   // Recalculate portfolios when quotes or assets change
   useEffect(() => {
@@ -90,15 +137,39 @@ export function usePortfolios() {
 
     // Enrich assets with current prices
     const enrichedAssets: AssetWithPrice[] = allAssets.map((asset) => {
-      const quote = quotes[asset.ticker.toUpperCase()];
-      const currentPrice = quote?.price || asset.averagePrice;
-      const currentValue = asset.shares * currentPrice;
-      const costBasis = asset.shares * asset.averagePrice;
+      const derived = derivedHoldingsByAssetId.get(asset.id);
+      const hasManualHoldings = (asset.shares ?? 0) > 0 && (asset.averagePrice ?? 0) > 0;
+
+      // Se o ativo foi criado/importado com 0 e existem transações, usamos o derivado.
+      const effectiveShares = hasManualHoldings ? asset.shares : (derived?.shares ?? asset.shares);
+      const effectiveAveragePrice = hasManualHoldings
+        ? asset.averagePrice
+        : (derived?.averagePrice ?? asset.averagePrice);
+
+      const quoteKey = String(asset.ticker ?? '')
+        .trim()
+        .toUpperCase();
+
+      // Alguns usuários podem salvar tickers no formato Yahoo (ex: "HGBS11.SA").
+      // O backend normaliza e devolve sem ".SA", então aqui garantimos a compatibilidade.
+      const quote =
+        quotes[quoteKey] ??
+        quotes[quoteKey.replace(/\.SA$/i, '')];
+
+      // Importante: não usar "||" aqui, porque quote.price pode ser 0 (falha/ausência) e isso derruba o cálculo.
+      const quotedPrice =
+        Number.isFinite(quote?.price) && (quote?.price ?? 0) > 0 ? (quote!.price as number) : null;
+      const currentPrice = quotedPrice ?? effectiveAveragePrice;
+
+      const currentValue = effectiveShares * currentPrice;
+      const costBasis = effectiveShares * effectiveAveragePrice;
       const gain = currentValue - costBasis;
       const gainPercent = costBasis > 0 ? (gain / costBasis) * 100 : 0;
 
       return {
         ...asset,
+        shares: effectiveShares,
+        averagePrice: effectiveAveragePrice,
         currentPrice,
         currentValue,
         gain,
@@ -132,7 +203,7 @@ export function usePortfolios() {
     });
 
     setPortfoliosWithAssets(enrichedPortfolios);
-  }, [portfolios, allAssets, quotes]);
+  }, [portfolios, allAssets, quotes, derivedHoldingsByAssetId]);
 
   // Create new portfolio
   const createPortfolio = useCallback(
@@ -188,14 +259,26 @@ export function usePortfolios() {
     loadPortfolios();
   }, [loadPortfolios]);
 
+  // Recarrega automaticamente quando qualquer parte do cofre mudar (ex.: manutenção de tickers)
+  useEffect(() => {
+    if (!isUnlocked) return;
+
+    const onVaultDataChanged = () => {
+      loadPortfolios();
+    };
+
+    window.addEventListener('vault-data-changed', onVaultDataChanged);
+    return () => window.removeEventListener('vault-data-changed', onVaultDataChanged);
+  }, [isUnlocked, loadPortfolios]);
+
   // Refresh quotes periodically (every 5 minutes)
   useEffect(() => {
     if (!isUnlocked || allAssets.length === 0) return;
 
     const interval = setInterval(() => {
       const tickers = allAssets
-        .filter(a => ['stock', 'reit', 'etf'].includes(a.type))
-        .map(a => a.ticker);
+        .filter((a) => ['stock', 'reit', 'etf', 'crypto', 'investment_fund', 'fixed_income'].includes(a.type))
+        .map((a) => a.ticker);
       
       if (tickers.length > 0) {
         fetchQuotes(tickers);
@@ -203,6 +286,18 @@ export function usePortfolios() {
     }, 5 * 60 * 1000);
 
     return () => clearInterval(interval);
+  }, [isUnlocked, allAssets, fetchQuotes]);
+
+  const refreshQuotesNow = useCallback(async () => {
+    if (!isUnlocked) return;
+
+    const tickers = allAssets
+      .filter((a) => ['stock', 'reit', 'etf', 'crypto', 'investment_fund', 'fixed_income'].includes(a.type))
+      .map((a) => a.ticker);
+
+    if (tickers.length > 0) {
+      await fetchQuotes(tickers, { force: true });
+    }
   }, [isUnlocked, allAssets, fetchQuotes]);
 
   return {
@@ -214,5 +309,7 @@ export function usePortfolios() {
     updatePortfolio,
     removePortfolio,
     refresh: loadPortfolios,
+    refreshQuotesNow,
+    quotesLastUpdated,
   };
 }

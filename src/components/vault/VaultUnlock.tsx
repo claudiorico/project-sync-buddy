@@ -3,12 +3,14 @@
  * Zero-Knowledge: password never leaves the client
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Lock, Eye, EyeOff, AlertTriangle, Trash2 } from 'lucide-react';
+import { Lock, Eye, EyeOff, AlertTriangle, Trash2, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useSecureStorage } from '@/contexts/SecureStorageContext';
+import { toast } from '@/hooks/use-toast';
+import { isPersistentStorageEnabled, requestPersistentStorage } from '@/lib/indexeddb';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,6 +34,13 @@ export function VaultUnlock({ onUnlock, onReset }: VaultUnlockProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [attempts, setAttempts] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [persisted, setPersisted] = useState<boolean | null>(null);
+  const [persistBusy, setPersistBusy] = useState(false);
+
+  useEffect(() => {
+    isPersistentStorageEnabled().then(setPersisted).catch(() => setPersisted(null));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,6 +139,57 @@ export function VaultUnlock({ onUnlock, onReset }: VaultUnlockProps) {
               {isSubmitting ? 'Desbloqueando...' : 'Desbloquear'}
             </Button>
           </form>
+
+          {/* Persistent Storage */}
+          <div className="mt-6 rounded-lg border border-border bg-card/50 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">Persistência do cofre</p>
+                <p className="text-xs text-muted-foreground">
+                  {persisted === true
+                    ? 'Ativa: o navegador tende a não limpar seus dados.'
+                    : persisted === false
+                      ? 'Inativa: seus dados podem ser removidos em limpezas automáticas.'
+                      : 'Indisponível neste navegador.'}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={persistBusy || persisted !== false}
+                onClick={async () => {
+                  setPersistBusy(true);
+                  try {
+                    const granted = await requestPersistentStorage();
+                    const next = await isPersistentStorageEnabled();
+                    setPersisted(next);
+
+                    toast({
+                      title: granted ? 'Persistência ativada' : 'Persistência negada',
+                      description: granted
+                        ? 'O navegador tende a não limpar os dados do cofre.'
+                        : 'Seu navegador recusou a persistência. Ainda funciona, mas pode ser apagado em limpezas automáticas (principalmente em modo anônimo / pouca memória).',
+                      variant: granted ? undefined : 'destructive',
+                    });
+                  } catch (e) {
+                    console.error('[Vault] Persist request failed', e);
+                    toast({
+                      title: 'Não foi possível ativar',
+                      description: 'Este navegador não suportou ou bloqueou a persistência.',
+                      variant: 'destructive',
+                    });
+                    setPersisted(await isPersistentStorageEnabled().catch(() => null));
+                  } finally {
+                    setPersistBusy(false);
+                  }
+                }}
+              >
+                <HardDrive className="h-4 w-4" />
+                {persisted === true ? 'Ativo' : persistBusy ? 'Ativando...' : 'Ativar'}
+              </Button>
+            </div>
+          </div>
 
           {/* Reset Option */}
           {attempts >= 3 && (

@@ -18,7 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeBackendFunction } from '@/lib/backend/functionsClient';
+import { normalizeTickerForStorage } from '@/lib/ticker';
 import type { Asset } from '@/types/financial';
 
 const ASSET_TYPES: { value: Asset['type']; label: string }[] = [
@@ -26,6 +27,7 @@ const ASSET_TYPES: { value: Asset['type']; label: string }[] = [
   { value: 'reit', label: 'FII' },
   { value: 'etf', label: 'ETF' },
   { value: 'fixed_income', label: 'Renda Fixa' },
+  { value: 'investment_fund', label: 'Fundo de Investimento (CVM)' },
   { value: 'crypto', label: 'Criptoativo' },
   { value: 'international', label: 'Internacional' },
 ];
@@ -57,39 +59,107 @@ export function AssetFormDialog({
   const isEditing = !!asset;
 
   // Fetch asset name from API when ticker changes
-  const fetchAssetName = useCallback(async (tickerValue: string) => {
-    if (!tickerValue || tickerValue.length < 4) return;
-    
-    setIsLoadingName(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('get-quotes', {
-        body: { tickers: [tickerValue.toUpperCase()] },
-      });
+  const fetchAssetName = useCallback(
+    async (tickerValue: string) => {
+      const cleaned = tickerValue.trim();
 
-      if (!error && data?.quotes?.[0] && !data.quotes[0].error) {
-        const result = data.quotes[0];
-        if (result.name) {
-          setName(result.name);
+      // Regras de tamanho por tipo
+      const minLength = type === 'crypto' ? 3 : type === 'investment_fund' ? 14 : 4;
+      if (!cleaned || cleaned.length < minLength) return;
+
+      // Fundo CVM: usa CNPJ (somente dígitos)
+      const normalizedTicker = type === 'investment_fund'
+        ? cleaned.replace(/\D/g, '').slice(0, 14)
+        : cleaned.toUpperCase();
+
+      const upper = normalizedTicker.toUpperCase();
+
+      // Fallback instantâneo para alguns criptoativos comuns (evita depender 100% da API)
+      if (type === 'crypto') {
+        const cryptoNameMap: Record<string, string> = {
+          BTC: 'Bitcoin',
+          ETH: 'Ethereum',
+          USDT: 'Tether',
+          USDC: 'USD Coin',
+          HYPE: 'Hyperliquid',
+        };
+        const mapped = cryptoNameMap[upper];
+        if (mapped) {
+          setName(mapped);
+          return;
         }
       }
-      // If API fails or returns error, just let user fill name manually
-    } catch (err) {
-      // Silently fail - user can fill name manually
-      console.log('Could not auto-fill asset name:', err);
-    } finally {
-      setIsLoadingName(false);
-    }
-  }, []);
+
+      setIsLoadingName(true);
+      try {
+        console.log('[CVM][UI] consultando nome para', { type, input: tickerValue, upper });
+
+        const { data, error } = await invokeBackendFunction<{ quotes?: Array<{ name?: string; error?: string }>; error?: string }>(
+          'get-quotes',
+          { body: { tickers: [upper] } }
+        );
+
+        console.log('[CVM][UI] resposta get-quotes', { error, data });
+
+        if (!error && data?.quotes?.[0]) {
+          const result = data.quotes[0];
+          console.log('[CVM][UI] quote[0]', result);
+
+          // Para Fundo CVM, queremos ao menos preencher o nome mesmo que ainda não haja cota.
+          if (type === 'investment_fund') {
+            if (result.error) {
+              console.warn('[CVM][UI] fundo retornou erro', result.error);
+            }
+
+            const candidate = (result.name ?? '').trim();
+            const isFallback = /^Fundo\s/i.test(candidate);
+
+            console.log('[CVM][UI] nome recebido', {
+              candidate,
+              isFallback,
+              sameAsCnpj: candidate === upper,
+            });
+
+            // Só auto-preenche quando realmente temos um nome "humano" do fundo.
+            // Se a API devolveu o fallback "Fundo <CNPJ>", mantemos em branco para o usuário preencher.
+            if (candidate && !isFallback && candidate !== upper) setName(candidate);
+            return;
+          }
+
+          if (result.name) {
+            // Para Tesouro Direto, preenche o nome mesmo se a cota/preço não estiver disponível
+            if (type === 'fixed_income' && upper.startsWith('TD:')) {
+              setName(result.name);
+            } else if (!result.error) {
+              setName(result.name);
+            }
+          }
+        }
+        // If API fails or returns error, just let user fill name manually
+      } catch (err) {
+        console.log('Could not auto-fill asset name:', err);
+      } finally {
+        setIsLoadingName(false);
+      }
+    },
+    [type]
+  );
 
   // Debounce ticker input to fetch name
   useEffect(() => {
-    if (!asset && ticker.length >= 4) {
-      const timeoutId = setTimeout(() => {
-        fetchAssetName(ticker);
-      }, 500);
-      return () => clearTimeout(timeoutId);
-    }
-  }, [ticker, asset, fetchAssetName]);
+    if (asset) return;
+
+    const minLength = type === 'crypto' ? 3 : type === 'investment_fund' ? 14 : 4;
+    const raw = ticker.trim();
+    const effectiveLen = type === 'investment_fund' ? raw.replace(/\D/g, '').length : raw.length;
+    if (effectiveLen < minLength) return;
+
+    const timeoutId = setTimeout(() => {
+      fetchAssetName(ticker);
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [ticker, asset, fetchAssetName, type]);
 
   useEffect(() => {
     if (asset) {
@@ -115,10 +185,14 @@ export function AssetFormDialog({
 
     setIsSubmitting(true);
     try {
+      const normalizedTicker = normalizeTickerForStorage(ticker, type);
+
+      const normalizedName = name.trim().toUpperCase();
+
       await onSubmit({
         portfolioId,
-        ticker: ticker.trim().toUpperCase(),
-        name: name.trim(),
+        ticker: normalizedTicker,
+        name: normalizedName,
         type,
         targetAllocation: parseFloat(targetAllocation),
         shares: parseFloat(shares) || 0,
@@ -145,18 +219,18 @@ export function AssetFormDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="ticker">Ticker</Label>
-                <Input
-                  id="ticker"
-                  value={ticker}
-                  onChange={(e) => setTicker(e.target.value)}
-                  placeholder="Ex: PETR4"
-                  required
-                />
-              </div>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="ticker">{type === 'investment_fund' ? 'CNPJ do Fundo' : 'Ticker'}</Label>
+                  <Input
+                    id="ticker"
+                    value={ticker}
+                    onChange={(e) => setTicker(e.target.value)}
+                    placeholder={type === 'investment_fund' ? 'Ex: 12.345.678/0001-90' : 'Ex: PETR4'}
+                    required
+                  />
+                </div>
 
               <div className="grid gap-2">
                 <Label htmlFor="type">Tipo</Label>

@@ -43,6 +43,8 @@ import {
   downloadFromGoogleDrive,
   uploadToGoogleDrive,
   clearGoogleDriveConfig,
+  getConnectedUserEmail,
+  getGoogleDriveBackupInfo,
 } from '@/lib/google-drive';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -57,12 +59,13 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
   const [clientId, setClientId] = useState('');
   const [showClientIdInput, setShowClientIdInput] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   const { exportEncryptedBackup, importEncryptedBackup, isUnlocked } = useSecureStorage();
   const { syncNow } = useAutoSync();
-  
-  const syncStatus = getSyncStatus();
-  const isConnected = isGoogleDriveConnected();
+
+  const [syncStatus, setSyncStatus] = useState(getSyncStatus());
+  const [isConnected, setIsConnected] = useState(isGoogleDriveConnected());
+  const connectedEmail = getConnectedUserEmail();
   
   // Manual export
   const handleExport = async () => {
@@ -103,6 +106,7 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
         assets: backup.data.assets,
         transactions: backup.data.transactions,
         dividends: backup.data.dividends,
+        cash_movements: backup.data.cash_movements,
         settings: backup.data.settings,
         metadata: backup.data.metadata,
       });
@@ -140,12 +144,13 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
       });
       return;
     }
-    
+
     setIsLoading(true);
     try {
       await initiateGoogleAuth(clientId);
       setShowClientIdInput(false);
-      
+      setIsConnected(true);
+
       toast({
         title: 'Google Drive conectado',
         description: 'Sync automático ativado',
@@ -160,11 +165,13 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
       setIsLoading(false);
     }
   };
-  
+
   const handleDisconnectGoogleDrive = () => {
     clearGoogleDriveConfig();
     updateSyncStatus({ provider: null, autoSyncEnabled: false });
-    
+    setIsConnected(false);
+    setSyncStatus(getSyncStatus());
+
     toast({
       title: 'Google Drive desconectado',
       description: 'Seus dados locais permanecem intactos',
@@ -176,15 +183,15 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
     setIsLoading(true);
     try {
       const cloudData = await downloadFromGoogleDrive();
-      
+
       if (cloudData) {
         await importEncryptedBackup(cloudData);
-        
+
         toast({
           title: 'Dados sincronizados',
           description: 'Backup da nuvem restaurado. Faça login novamente.',
         });
-        
+
         window.location.reload();
       } else {
         toast({
@@ -206,17 +213,36 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
   // Sync to Google Drive
   const handleSyncToCloud = async () => {
     if (!isUnlocked) return;
-    
+
     setIsLoading(true);
     try {
+      // Primeira vez neste dispositivo/cofre: evita sobrepor um backup antigo sem querer.
+      const status = getSyncStatus();
+      if (!status.lastSyncAt) {
+        const cloud = await getGoogleDriveBackupInfo({ allowInteractive: true });
+        if (cloud.exists) {
+          const ok = window.confirm(
+            'Já existe um backup na nuvem para esta conta.\n\nDeseja substituir o arquivo existente pelos dados deste cofre?'
+          );
+          if (!ok) {
+            toast({
+              title: 'Backup cancelado',
+              description: 'Nada foi enviado para a nuvem.',
+            });
+            return;
+          }
+        }
+      }
+
       const data = await exportEncryptedBackup();
       await uploadToGoogleDrive(data);
-      
+
       updateSyncStatus({
         lastSyncAt: Date.now(),
         provider: 'google_drive',
       });
-      
+      setSyncStatus(getSyncStatus());
+
       toast({
         title: 'Backup realizado',
         description: 'Dados enviados para o Google Drive',
@@ -231,11 +257,12 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
       setIsLoading(false);
     }
   };
-  
+
   // Toggle auto-sync
   const handleToggleAutoSync = (enabled: boolean) => {
     updateSyncStatus({ autoSyncEnabled: enabled });
-    
+    setSyncStatus(getSyncStatus());
+
     if (enabled && isConnected) {
       syncNow();
     }
@@ -284,9 +311,14 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
                 className="space-y-4"
               >
                 <div className="flex items-center justify-between rounded-lg border border-success/20 bg-success-muted p-3">
-                  <div className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-success" />
-                    <span className="text-sm font-medium text-success">Conectado</span>
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <Check className="h-4 w-4 text-success" />
+                      <span className="text-sm font-medium text-success">Conectado</span>
+                    </div>
+                    {connectedEmail && (
+                      <span className="text-xs text-muted-foreground ml-6">{connectedEmail}</span>
+                    )}
                   </div>
                   <Button
                     variant="ghost"
