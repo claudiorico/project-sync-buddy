@@ -29,7 +29,7 @@ export function AllocationChart({ data, totalValue, onSelectPortfolio }: Allocat
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.4 }}
-        className="rounded-xl border border-border bg-card p-6 shadow-card"
+        className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card sm:p-6"
       >
         <div className="mb-6">
           <h3 className="text-lg font-semibold text-foreground">
@@ -51,9 +51,9 @@ export function AllocationChart({ data, totalValue, onSelectPortfolio }: Allocat
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.4 }}
-      className="rounded-xl border border-border bg-card p-6 shadow-card"
+      className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4 shadow-card sm:p-6"
     >
-      <div className="mb-6">
+      <div className="mb-4 sm:mb-6">
         <h3 className="text-lg font-semibold text-foreground">
           Alocação por Carteira
         </h3>
@@ -63,7 +63,7 @@ export function AllocationChart({ data, totalValue, onSelectPortfolio }: Allocat
       </div>
 
       <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
-        <div className="mx-auto h-[220px] w-full max-w-[220px] sm:mx-0 sm:h-[260px] sm:max-w-[260px]">
+        <div className="mx-auto h-[200px] w-full max-w-[200px] sm:mx-0 sm:h-[240px] sm:max-w-[240px]">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -105,25 +105,25 @@ export function AllocationChart({ data, totalValue, onSelectPortfolio }: Allocat
           </ResponsiveContainer>
         </div>
 
-        <div className="w-full flex-1 space-y-3">
+        <div className="w-full flex-1 space-y-3 min-w-0">
           {data.map((item, index) => (
             <motion.div
               key={item.name}
               initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay: 0.5 + index * 0.1 }}
-              className="flex items-center justify-between"
+              className="flex items-start justify-between gap-3"
             >
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <div
                   className="h-3 w-3 rounded-full"
                   style={{ backgroundColor: item.color }}
                 />
-                <span className="text-sm font-medium text-foreground">
+                <span className="min-w-0 truncate text-sm font-medium text-foreground">
                   {item.name}
                 </span>
               </div>
-              <div className="text-right">
+              <div className="shrink-0 text-right">
                 <span className="text-sm font-semibold text-foreground tabular-nums">
                   {item.value}%
                 </span>

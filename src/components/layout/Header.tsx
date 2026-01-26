@@ -1,8 +1,9 @@
-import { Bell, Search, Sun, Moon, User, Lock, Cloud, HardDrive, LogOut } from "lucide-react";
+import { Bell, Sun, Moon, User, Lock, Cloud, HardDrive, LogOut } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { SearchCommand } from "./SearchCommand";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,52 +53,50 @@ export function Header() {
   const syncStatus = getSyncStatus();
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-border bg-card px-6">
+    <header className="flex h-16 items-center justify-between gap-2 border-b border-border bg-card px-3 sm:gap-3 sm:px-4 lg:px-6">
       {/* Search */}
-      <div className="flex items-center gap-4">
-        <div className="relative w-full max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Buscar ativos, carteiras..."
-            className="h-10 w-full border-0 bg-muted/50 pl-10 pr-4 text-sm focus-visible:ring-1 focus-visible:ring-primary"
-          />
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+        <SidebarTrigger className="shrink-0" />
+        <SearchCommand />
+        <div className="hidden shrink-0 lg:block">
+          <PrivacyBadge />
         </div>
-        <PrivacyBadge />
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
         {/* Sync Status & Backup */}
-        <BackupRestoreDialog
-          trigger={
-            <motion.div whileTap={{ scale: 0.95 }}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative h-10 w-10 rounded-lg"
-                title={syncConnected ? "Google Drive conectado" : "Backup & Sync"}
-              >
-                {syncConnected ? (
-                  <Cloud className="h-4 w-4 text-success" />
-                ) : (
-                  <HardDrive className="h-4 w-4 text-muted-foreground" />
-                )}
-                {syncStatus.autoSyncEnabled && syncConnected && (
-                  <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-success animate-pulse" />
-                )}
-              </Button>
-            </motion.div>
-          }
-        />
+        <div className="hidden md:block">
+          <BackupRestoreDialog
+            trigger={
+              <motion.div whileTap={{ scale: 0.95 }}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="relative h-9 w-9 rounded-lg"
+                  title={syncConnected ? "Google Drive conectado" : "Backup & Sync"}
+                >
+                  {syncConnected ? (
+                    <Cloud className="h-4 w-4 text-success" />
+                  ) : (
+                    <HardDrive className="h-4 w-4 text-muted-foreground" />
+                  )}
+                  {syncStatus.autoSyncEnabled && syncConnected && (
+                    <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-success animate-pulse" />
+                  )}
+                </Button>
+              </motion.div>
+            }
+          />
+        </div>
 
         {/* Lock Vault */}
-        <motion.div whileTap={{ scale: 0.95 }}>
+        <motion.div whileTap={{ scale: 0.95 }} className="hidden sm:block">
           <Button
             variant="ghost"
             size="icon"
             onClick={lockVault}
-            className="h-10 w-10 rounded-lg"
+            className="h-9 w-9 rounded-lg"
             title="Bloquear cofre"
           >
             <Lock className="h-4 w-4 text-muted-foreground" />
@@ -110,7 +109,8 @@ export function Header() {
             variant="ghost"
             size="icon"
             onClick={toggleTheme}
-            className="h-10 w-10 rounded-lg"
+            className="h-9 w-9 rounded-lg"
+            title="Alternar tema"
           >
             {isDark ? (
               <Sun className="h-4 w-4 text-muted-foreground" />
@@ -121,11 +121,12 @@ export function Header() {
         </motion.div>
 
         {/* Notifications */}
-        <motion.div whileTap={{ scale: 0.95 }}>
+        <motion.div whileTap={{ scale: 0.95 }} className="hidden lg:block">
           <Button
             variant="ghost"
             size="icon"
-            className="relative h-10 w-10 rounded-lg"
+            className="relative h-9 w-9 rounded-lg"
+            title="Notificações"
           >
             <Bell className="h-4 w-4 text-muted-foreground" />
             <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" />
@@ -137,9 +138,9 @@ export function Header() {
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="ml-2 flex h-10 items-center gap-3 rounded-lg px-2 hover:bg-muted"
+              className="flex h-9 shrink-0 items-center gap-2 rounded-lg px-1.5 hover:bg-muted sm:px-2"
             >
-              <Avatar className="h-8 w-8 ring-2 ring-primary/20">
+              <Avatar className="h-8 w-8 shrink-0 ring-2 ring-primary/20">
                 <AvatarImage 
                   src={user?.photoURL || undefined} 
                   alt={user?.displayName || "Usuário"} 
@@ -149,11 +150,11 @@ export function Header() {
                   {getUserInitials()}
                 </AvatarFallback>
               </Avatar>
-              <div className="hidden flex-col items-start md:flex">
-                <span className="text-sm font-medium">
+              <div className="hidden min-w-0 flex-col items-start xl:flex">
+                <span className="truncate text-sm font-medium">
                   {user?.displayName || 'Usuário'}
                 </span>
-                <span className="text-xs text-muted-foreground">
+                <span className="truncate text-xs text-muted-foreground">
                   {isAuthenticated ? user?.email : 'Zero-Knowledge'}
                 </span>
               </div>
