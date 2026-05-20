@@ -19,7 +19,7 @@ const DEBOUNCE_MS = 5000; // Wait 5 seconds after last change before syncing
 
 export function useAutoSync() {
   const { isUnlocked, exportEncryptedBackup } = useSecureStorage();
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSyncingRef = useRef(false);
 
   // Evita loop de tentativas quando o navegador exige gesto do usuário (popup bloqueado).
