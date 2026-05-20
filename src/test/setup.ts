@@ -1,4 +1,4 @@
-import "@testing-library/jest-dom/vitest";
+/// <reference types="vitest/globals" />
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
