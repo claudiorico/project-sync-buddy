@@ -23,13 +23,6 @@ function isFromOurApp(req: Request): boolean {
       (!!apikey && !!expectedAnon && apikey === expectedAnon) ||
       (!!apikey && !!expectedPub && apikey === expectedPub);
 
-    // Primary: Lovable app origin
-    if (origin) {
-      const host = new URL(origin).hostname.toLowerCase();
-      const isLovableHost = host.endsWith('.lovableproject.com') || host.endsWith('.lovable.app');
-      if (isLovableHost) return true;
-    }
-
     // Fallback: apikey matches this project's public/anon key
     return apikeyMatches;
   } catch {
@@ -110,7 +103,7 @@ async function fetchCachedCsv(url: string, ttlMs: number): Promise<string | null
 
   const p = (async () => {
     const regResp = await fetch(url, {
-      headers: { 'User-Agent': 'Lovable/1.0', Accept: 'text/csv,*/*' },
+      headers: { 'User-Agent': 'InvestPro/1.0', Accept: 'text/csv,*/*' },
     });
 
     console.log('[CVM][CACHE] fetch csv', { url, ok: regResp.ok, status: regResp.status });
@@ -140,7 +133,7 @@ async function getInfDiarioCsv(yyyymm: string): Promise<string | null> {
   const p = (async () => {
     const zipUrl = `https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_${yyyymm}.zip`;
     const resp = await fetch(zipUrl, {
-      headers: { 'User-Agent': 'Lovable/1.0', Accept: '*/*' },
+      headers: { 'User-Agent': 'InvestPro/1.0', Accept: '*/*' },
     });
 
     console.log('[CVM][CACHE] fetch inf_diario zip', { yyyymm, ok: resp.ok, status: resp.status });
@@ -424,7 +417,7 @@ async function fetchAnbimaTpfItems(): Promise<AnbimaTpfItem[]> {
     const url = 'https://api.anbima.com.br/feed/precos-indices/v1/titulos-publicos/mercado-secundario-TPF';
     const resp = await fetch(url, {
       headers: {
-        'User-Agent': 'Lovable/1.0',
+        'User-Agent': 'InvestPro/1.0',
         Accept: 'application/json',
       },
     });
@@ -469,7 +462,7 @@ async function fetchTesouroB3Items(): Promise<B3TesouroItem[]> {
       try {
         const resp = await fetch(url, {
           headers: {
-            'User-Agent': 'Lovable/1.0',
+            'User-Agent': 'InvestPro/1.0',
             Accept: 'application/json',
           },
         });
@@ -809,7 +802,7 @@ async function fetchCvmFundName(cnpjDigits: string): Promise<string | null> {
     // 2) Fallback: arquivo cadastral (zip)
     const cadZipUrl = 'https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi.zip';
     const resp = await fetch(cadZipUrl, {
-      headers: { 'User-Agent': 'Lovable/1.0', 'Accept': '*/*' },
+      headers: { 'User-Agent': 'InvestPro/1.0', 'Accept': '*/*' },
     });
     console.log('[CVM][NAME] fetch zip', { ok: resp.ok, status: resp.status });
     if (!resp.ok) return null;
@@ -1202,8 +1195,8 @@ serve(async (req) => {
 
   // API key (recommended): require only if configured as a secret
   if (REQUIRED_API_KEY) {
-    // Allow calls coming from our Lovable app origin without exposing the secret in the client.
-    // External callers still must provide x-api-key.
+    // External callers must provide x-api-key.
+    // Internal app calls are identified by the apikey header matching the project key.
     if (!isFromOurApp(req)) {
       const provided = (req.headers.get('x-api-key') ?? '').trim();
       if (provided !== REQUIRED_API_KEY) {

@@ -23,12 +23,6 @@ function isFromOurApp(req: Request): boolean {
       (!!apikey && !!expectedAnon && apikey === expectedAnon) ||
       (!!apikey && !!expectedPub && apikey === expectedPub);
 
-    if (origin) {
-      const host = new URL(origin).hostname.toLowerCase();
-      const isLovableHost = host.endsWith('.lovableproject.com') || host.endsWith('.lovable.app');
-      if (isLovableHost) return true;
-    }
-
     return apikeyMatches;
   } catch {
     return false;
@@ -149,7 +143,7 @@ function clampMonths(m: unknown): number {
 // e extraímos a última cota disponível do mês para cada CNPJ pedido.
 // ------------------
 
-const corsFetchHeaders = { "User-Agent": "Lovable/1.0", Accept: "*/*" };
+const corsFetchHeaders = { "User-Agent": "InvestPro/1.0", Accept: "*/*" };
 
 // Cache por invocação (vive enquanto o worker estiver quente)
 const infDiarioCsvCache = new Map<string, string | null>();
@@ -496,7 +490,7 @@ async function fetchYahooHistory(ticker: string, months: number): Promise<Histor
 
   const resp = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (Lovable)",
+      "User-Agent": "Mozilla/5.0 (InvestPro)",
       Accept: "application/json",
     },
   });
