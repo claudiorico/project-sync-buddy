@@ -495,3 +495,91 @@ export function getConnectedUserEmail(): string | null {
   const config = getGoogleDriveConfig();
   return config?.userEmail || null;
 }
+
+export type DriveFileInfo = {
+  id: string;
+  name: string;
+  modifiedTime: string | null;
+};
+
+/**
+ * List ALL files in the appDataFolder (no filename filter).
+ * Useful when the exact backup name is unknown (e.g. different OAuth Client ID was used).
+ */
+export async function listAllBackupFiles(opts?: {
+  allowInteractive?: boolean;
+}): Promise<DriveFileInfo[]> {
+  const config = getGoogleDriveConfig();
+  if (!config?.clientId) {
+    throw new Error("Google Drive não configurado");
+  }
+
+  const accessToken = await getValidAccessToken(config.clientId, {
+    allowInteractive: opts?.allowInteractive ?? false,
+  });
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&pageSize=100`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Falha ao listar arquivos do Google Drive");
+  }
+
+  const data = await response.json();
+  const files: DriveFileInfo[] = (data.files || [])
+    .filter((f: { id?: string }) => !!f?.id)
+    .sort((a: { modifiedTime?: string }, b: { modifiedTime?: string }) => {
+      const ta = a.modifiedTime ? new Date(a.modifiedTime).getTime() : 0;
+      const tb = b.modifiedTime ? new Date(b.modifiedTime).getTime() : 0;
+      return tb - ta;
+    });
+
+  return files;
+}
+
+/**
+ * Download and parse a backup from Google Drive using a specific file ID.
+ */
+export async function downloadFromGoogleDriveById(fileId: string): Promise<string | null> {
+  const config = getGoogleDriveConfig();
+  if (!config?.clientId) {
+    throw new Error("Google Drive não configurado");
+  }
+
+  const accessToken = await getValidAccessToken(config.clientId);
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Falha ao baixar arquivo do Google Drive");
+  }
+
+  const content = await response.text();
+
+  try {
+    const backup = parseBackupPayload(content);
+    return JSON.stringify({
+      portfolios: backup.data.portfolios,
+      assets: backup.data.assets,
+      transactions: backup.data.transactions,
+      dividends: backup.data.dividends,
+      settings: backup.data.settings,
+      metadata: backup.data.metadata,
+    });
+  } catch {
+    return content;
+  }
+}

@@ -15,6 +15,9 @@ import {
   AlertTriangle,
   HardDrive,
   Trash2,
+  FolderSearch,
+  ArrowLeft,
+  FileArchive,
 } from 'lucide-react';
 import {
   Dialog,
@@ -41,10 +44,13 @@ import {
   initiateGoogleAuth,
   isGoogleDriveConnected,
   downloadFromGoogleDrive,
+  downloadFromGoogleDriveById,
   uploadToGoogleDrive,
   clearGoogleDriveConfig,
   getConnectedUserEmail,
   getGoogleDriveBackupInfo,
+  listAllBackupFiles,
+  DriveFileInfo,
 } from '@/lib/google-drive';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -66,6 +72,9 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
   const [syncStatus, setSyncStatus] = useState(getSyncStatus());
   const [isConnected, setIsConnected] = useState(isGoogleDriveConnected());
   const connectedEmail = getConnectedUserEmail();
+  const [driveFiles, setDriveFiles] = useState<DriveFileInfo[]>([]);
+  const [showFilePicker, setShowFilePicker] = useState(false);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
   
   // Manual export
   const handleExport = async () => {
@@ -210,6 +219,57 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
     }
   };
   
+  // Browse all files in appDataFolder
+  const handleBrowseFiles = async () => {
+    setIsLoading(true);
+    setSelectedFileId(null);
+    try {
+      const files = await listAllBackupFiles({ allowInteractive: true });
+      setDriveFiles(files);
+      setShowFilePicker(true);
+      if (files.length === 0) {
+        toast({
+          title: 'Nenhum arquivo encontrado',
+          description: 'A pasta appDataFolder do Google Drive está vazia',
+        });
+        setShowFilePicker(false);
+      }
+    } catch (error) {
+      toast({
+        title: 'Erro ao listar arquivos',
+        description: error instanceof Error ? error.message : 'Falha ao acessar o Google Drive',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Restore from a selected file ID
+  const handleRestoreSelected = async () => {
+    if (!selectedFileId) return;
+    setIsLoading(true);
+    try {
+      const cloudData = await downloadFromGoogleDriveById(selectedFileId);
+      if (cloudData) {
+        await importEncryptedBackup(cloudData);
+        toast({
+          title: 'Backup restaurado',
+          description: 'Dados importados com sucesso. Faça login novamente.',
+        });
+        window.location.reload();
+      }
+    } catch (error) {
+      toast({
+        title: 'Erro ao restaurar',
+        description: error instanceof Error ? error.message : 'Falha ao baixar o arquivo',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Sync to Google Drive
   const handleSyncToCloud = async () => {
     if (!isUnlocked) return;
@@ -268,6 +328,19 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
     }
   };
   
+  const formatFileName = (name: string) => {
+    const prefix = 'investpro-vault.encrypted-';
+    if (name.startsWith(prefix)) {
+      const encoded = name.slice(prefix.length);
+      try {
+        const padded = encoded + '=='.slice((encoded.length % 4) || 4);
+        const email = atob(padded);
+        if (email.includes('@')) return email;
+      } catch {}
+    }
+    return name;
+  };
+
   const formatLastSync = (timestamp: number | null) => {
     if (!timestamp) return 'Nunca';
     
@@ -348,28 +421,104 @@ export function BackupRestoreDialog({ trigger }: BackupRestoreDialogProps) {
                   Último sync: {formatLastSync(syncStatus.lastSyncAt)}
                 </div>
                 
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-2"
-                    onClick={handleSyncFromCloud}
-                    disabled={isLoading}
-                  >
-                    <Download className="h-4 w-4" />
-                    Baixar da nuvem
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="flex-1 gap-2"
-                    onClick={handleSyncToCloud}
-                    disabled={isLoading || !isUnlocked}
-                  >
-                    <Upload className="h-4 w-4" />
-                    Enviar para nuvem
-                  </Button>
-                </div>
+                {showFilePicker ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2"
+                        onClick={() => { setShowFilePicker(false); setSelectedFileId(null); }}
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm font-medium">
+                        {driveFiles.length} arquivo{driveFiles.length !== 1 ? 's' : ''} encontrado{driveFiles.length !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border p-1">
+                      {driveFiles.map((file) => (
+                        <button
+                          key={file.id}
+                          onClick={() => setSelectedFileId(file.id)}
+                          className={cn(
+                            'w-full flex items-start gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors',
+                            selectedFileId === file.id
+                              ? 'bg-primary text-primary-foreground'
+                              : 'hover:bg-muted'
+                          )}
+                        >
+                          <FileArchive className="mt-0.5 h-4 w-4 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">
+                              {formatFileName(file.name)}
+                            </div>
+                            {file.modifiedTime && (
+                              <div className={cn(
+                                'text-xs',
+                                selectedFileId === file.id ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                              )}>
+                                {new Date(file.modifiedTime).toLocaleString('pt-BR')}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                    <Button
+                      size="sm"
+                      className="w-full gap-2"
+                      onClick={handleRestoreSelected}
+                      disabled={isLoading || !selectedFileId}
+                    >
+                      {isLoading ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      Restaurar selecionado
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 gap-2"
+                        onClick={handleSyncFromCloud}
+                        disabled={isLoading}
+                      >
+                        <Download className="h-4 w-4" />
+                        Baixar da nuvem
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 gap-2"
+                        onClick={handleSyncToCloud}
+                        disabled={isLoading || !isUnlocked}
+                      >
+                        <Upload className="h-4 w-4" />
+                        Enviar para nuvem
+                      </Button>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full gap-2 text-muted-foreground"
+                      onClick={handleBrowseFiles}
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <FolderSearch className="h-4 w-4" />
+                      )}
+                      Procurar todos os backups
+                    </Button>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div
