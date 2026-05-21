@@ -56,6 +56,9 @@
     
     const result = parseHash();
     const PENDING_TOKEN_KEY = 'investpro_gdrive_pending';
+
+    // Computes the app root dynamically to work regardless of base path (e.g. GitHub Pages)
+    const APP_ROOT = window.location.pathname.replace(/\/auth\/google\/callback\.html$/, '') || '/';
     
     function showSuccess(message) {
       document.getElementById('loading').style.display = 'none';
@@ -94,7 +97,7 @@
           localStorage.setItem(PENDING_TOKEN_KEY, JSON.stringify(tokenData));
           showSuccess('Redirecionando...');
           setTimeout(() => {
-            window.location.href = '/settings?oauth=success';
+            window.location.href = APP_ROOT + '/settings?oauth=success';
           }, 500);
         }
       } else {
@@ -103,7 +106,7 @@
         localStorage.setItem(PENDING_TOKEN_KEY, JSON.stringify(tokenData));
         showSuccess('Redirecionando para configurações...');
         setTimeout(() => {
-          window.location.href = '/settings?oauth=success';
+          window.location.href = APP_ROOT + '/settings?oauth=success';
         }, 500);
       }
     } else if (result.error) {
