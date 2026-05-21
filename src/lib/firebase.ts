@@ -2,8 +2,8 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, type User } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY ?? "AIzaSyAUu8g06_D9r6XZnwi1ld6H_-b1rieAG6E",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN ?? "budget-buddy-23d58.firebaseapp.com",
 };
 
 const app = initializeApp(firebaseConfig);
